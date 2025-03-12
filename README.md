@@ -13,6 +13,7 @@ This script automates the installation and configuration of **Robotool** and **A
 - [Troubleshooting](#troubleshooting)
 - [Logs](#logs)
 - [Contact](#contact)
+- [Contribution](#contribution)
 
 ---
 
