@@ -1,14 +1,28 @@
 #!/bin/bash
+# Enable options to abort on errors, undefined variables, and pipeline errors
+set -euo pipefail
+
+# Function to check if a command is installed
+check_command() {
+    command -v "$1" >/dev/null 2>&1 || { echo "Command '$1' is not installed. Aborting." >&2; exit 1; }
+}
+
+# Verify necessary dependencies
+check_command wget
+check_command unzip
+check_command convert
+check_command gtk-update-icon-cache
+
 # Color settings for terminal output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'  # No color
 
-# Log file
+# Log file with more restricted permissions
 LOG_FILE="/tmp/install_script.log"
 touch "$LOG_FILE"
-sudo chmod 666 "$LOG_FILE" 2>/dev/null || true
+chmod 640 "$LOG_FILE"
 
 # Associative array for step statuses
 declare -A steps_status=(
@@ -23,14 +37,15 @@ declare -A steps_status=(
     ["Final Cleanup"]="Pending"
 )
 
-# Function to log messages with timestamp
+# Function to log messages with a timestamp
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
 }
 
-# Function to print the status of steps in the terminal
+# Function to print the status of each step
 print_status() {
-    clear
+    # Clear the screen only if output is a terminal
+    if [ -t 1 ]; then clear; fi
     echo "Step status:"
     for step in "Install Dependencies" "Install Robotool" "Create Robotool Shortcut" "Adjust Robotool Permissions" \
                 "Install Atelier B" "Extract and Move Atelier B" "Adjust Atelier B Permissions" \
@@ -50,7 +65,7 @@ print_status() {
     echo ""
 }
 
-# Function to execute a step, update status and handle errors
+# Function to execute a step and handle errors
 run_step() {
     local step_name="$1"
     shift
@@ -68,20 +83,36 @@ run_step() {
         steps_status["$step_name"]="ERROR"
         log "$step_name failed with code $ret."
         print_status
-        echo -e "${RED}An error occurred in '$step_name'. Closing the script.${NC}"
+        echo -e "${RED}An error occurred in '$step_name'. Exiting the script.${NC}"
         exit 1
     fi
     print_status
 }
 
+# Request elevation of privileges once, if necessary
+if [[ $EUID -ne 0 ]]; then
+    echo "This script requires administrative privileges. Please enter your password if prompted."
+    sudo -v
+fi
+
+# Function to determine the correct user home directory
+get_user_home() {
+    if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+        getent passwd "$SUDO_USER" | cut -d: -f6
+    else
+        echo "$HOME"
+    fi
+}
+
 ########################
-#    Step Functions    #
+#      Step Functions      #
 ########################
 
-# 1. Install Dependencies
+# 1. Install dependencies
 install_dependencies() {
+    # Extract distro ID, removing quotes if present
     local distro_id
-    distro_id=$(grep -oP '^ID=\K\w+' /etc/os-release | tr '[:upper:]' '[:lower:]')
+    distro_id=$(awk -F= '/^ID=/{gsub(/"/, "", $2); print tolower($2)}' /etc/os-release)
     case $distro_id in
         ubuntu|debian|linuxmint|pop)
             sudo apt-get update && sudo apt-get install -y wget unzip binutils zstd imagemagick
@@ -111,9 +142,10 @@ step_install_robotool() {
     sudo chmod +x /opt/robotool/eclipse || return 1
 }
 
-# 3. Create shortcut for Robotool
+# 3. Create Robotool shortcut
 step_create_robotool_shortcut() {
-    local USER_HOME=$(getent passwd $(logname) | cut -d: -f6)  # Crucial fix
+    local USER_HOME
+    USER_HOME=$(get_user_home)
     mkdir -p "$USER_HOME/.local/share/applications" || return 1
     
     # Icon conversion with verification
@@ -134,7 +166,7 @@ Terminal=false
 Categories=Development
 EOF
 
-    # Update icons without error messages
+    # Update icon cache without error messages
     gtk-update-icon-cache >/dev/null 2>&1 || true
     rm -f /tmp/robotool.product-linux.gtk.x86_64.zip
 }
@@ -143,9 +175,11 @@ EOF
 step_adjust_robotool_permissions() {
     if [ -d "/opt/robotool" ]; then
         sudo chmod -R 755 /opt/robotool/eclipse || return 1
-        sudo chmod +x ~/.local/share/applications/robotool.desktop || return 1
+        local USER_HOME
+        USER_HOME=$(get_user_home)
+        sudo chmod +x "$USER_HOME/.local/share/applications/robotool.desktop" || return 1
     else
-        echo "Folder /opt/robotool not found." >&2
+        echo "Directory /opt/robotool not found." >&2
         return 1
     fi
 }
@@ -157,7 +191,7 @@ step_install_atelierb() {
     ar x atelierb.deb || return 1
 }
 
-# Function to extract Atelier B (used in step 5)
+# Function to extract Atelier B (used in step 6)
 extract_atelier() {
     local data_file="$1"
     echo "Analyzing package structure..."
@@ -167,12 +201,12 @@ extract_atelier() {
         echo "Moving Atelier B to /opt..."
         sudo mv /tmp/atelier/opt/atelierb-cssp-24.04 /opt/ || return 1
     else
-        echo "The extracted structure does not match what you expected! Please manually inspect the contents of /tmp/atelier." >&2
+        echo "Extracted structure does not match the expected one! Please manually inspect /tmp/atelier." >&2
         return 1
     fi
 }
 
-#6. Extract and move Atelier B
+# 6. Extract and move Atelier B
 step_extract_atelierb() {
     if [ -f data.tar.zst ]; then
         extract_atelier data.tar.zst
@@ -181,7 +215,7 @@ step_extract_atelierb() {
     elif [ -f data.tar.xz ]; then
         extract_atelier data.tar.xz
     else
-        echo "Error: File data.tar.* not found!" >&2
+        echo "Error: data.tar.* file not found!" >&2
         return 1
     fi
 }
@@ -191,38 +225,39 @@ step_adjust_atelierb_permissions() {
     if [ -d "/opt/atelierb-cssp-24.04" ]; then
         sudo chmod -R 755 /opt/atelierb-cssp-24.04/bin/startAB || return 1
     else
-        echo "Folder /opt/atelierb-cssp-24.04 not found." >&2
+        echo "Directory /opt/atelierb-cssp-24.04 not found." >&2
         return 1
     fi
 }
 
-# 8. Create shortcut to Atelier B
+# 8. Create Atelier B shortcut
 step_create_atelierb_shortcut() {
-    local USER_HOME=$(getent passwd $(logname) | cut -d: -f6)  # Crucial fix
+    local USER_HOME
+    USER_HOME=$(get_user_home)
     mkdir -p "$USER_HOME/.local/share/applications" || return 1
     
     cat << EOF > "$USER_HOME/.local/share/applications/atelierb.desktop"
 [Desktop Entry]
 Name=Atelier B
 GenericName=Atelier B
-Comment=IDE for B creating B models
+Comment=IDE for B model development
 Type=Application
 Exec=/opt/atelierb-cssp-24.04/bin/startAB
 Terminal=false
 Icon=/opt/atelierb-cssp-24.04/share/icons/AtelierB128.png
 EOF
 
-    # Force refresh icon cache
+    # Force update of the icon cache
     gtk-update-icon-cache >/dev/null 2>&1 || true
 }
 
-#9. Final cleaning
+# 9. Final cleanup
 step_cleanup() {
     rm -f atelierb.deb control.tar.* data.tar.* debian-binary || return 1
 }
 
 ############################
-#    Execution of steps    #
+#    Execution of Steps    #
 ############################
 
 print_status
@@ -235,8 +270,8 @@ run_step "Install Atelier B" step_install_atelierb
 run_step "Extract and Move Atelier B" step_extract_atelierb
 run_step "Adjust Atelier B Permissions" step_adjust_atelierb_permissions
 run_step "Create Atelier B Shortcut" step_create_atelierb_shortcut
-run_step "Final Cleaning" step_cleanup
+run_step "Final Cleanup" step_cleanup
 
 echo -e "${GREEN}Installation completed successfully!${NC}"
-echo "Robotool and Atelier B are available in your applications menu"
+echo "Robotool and Atelier B are available in your applications menu."
 log "Script completed successfully."
