@@ -114,10 +114,9 @@ This script automates the installation and configuration of **Robotool** and **A
 Tools are accessible via your system’s application menu.  
 
 If shortcuts are missing, run:  
-
-    ```bash
-    gtk-update-icon-cache
-    ```
+   ```bash
+   gtk-update-icon-cache
+   ```
 
 ## Logs
 
