@@ -127,7 +127,7 @@ Detailed logs are saved to `/tmp/install_script.log`. Review this file if errors
 
 ## Contact
 
-For issues or questions, open an issue in the repository where this script is hosted.
+For issues or questions, open an issue in the repository where this script is hosted or to my institutional email pedro.ulisses@aluno.uece.br.
 
 ## Contribution
 If you want to contribute to the script, follow these steps:
