@@ -122,10 +122,9 @@ If shortcuts are missing, run:
 ## Logs
 
 Detailed logs are saved to `/tmp/install_script.log`. Review this file if errors occur:  
-
-    ```bash
-    cat /tmp/install_script.log
-    ```
+   ```bash
+   cat /tmp/install_script.log
+   ```
 
 ## Contact
 
